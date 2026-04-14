@@ -25,7 +25,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/rooms', require('./routes/rooms'));
 
 // Socket events
-require('./sockets/editorSocket')(io);
+//require('./sockets/editorSocket')(io);
 
 // MongoDB connection
 mongoose.connect(process.env.MONGO_URI)
