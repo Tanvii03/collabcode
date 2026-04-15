@@ -6,6 +6,7 @@ const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
+app.use(express.json());
 const server = http.createServer(app);
 
 // Socket.io setup
