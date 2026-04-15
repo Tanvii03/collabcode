@@ -4,6 +4,7 @@ const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
+require('./models/Note');
 
 const app = express();
 app.use(express.json());
@@ -31,7 +32,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/rooms', require('./routes/rooms'));
 
 // Socket events
-//require('./sockets/editorSocket')(io);
+require('./sockets/editorSocket')(io);
 
 // MongoDB connection
 mongoose.connect(process.env.MONGO_URI)
