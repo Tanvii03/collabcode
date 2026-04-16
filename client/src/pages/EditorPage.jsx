@@ -59,11 +59,11 @@ export default function EditorPage() {
         <span style={styles.logo}>{'</>'}</span>
 
         <button onClick={copyRoomId} style={styles.roomBadge} title="Click to copy">
-          📋 {roomId}
+           🔒{roomId}
         </button>
 
         <span style={role === 'host' ? styles.hostBadge : styles.peerBadge}>
-          {role === 'host' ? '👑 Host' : '👤 Peer'}
+          {role === 'host' ? ' Host' : '👤 Peer'}
         </span>
 
         <span style={styles.userName}>{user?.name}</span>
@@ -73,7 +73,7 @@ export default function EditorPage() {
             onClick={() => setShowVideo(v => !v)}
             style={styles.vidBtn}
           >
-            {showVideo ? '📵 Hide Video' : '📹 Video Call'}
+            {showVideo ? 'Hide Video' : '📹 Video Call'}
           </button>
           <button onClick={handleLeaveRoom} style={styles.leaveBtn}>
             Leave Room
