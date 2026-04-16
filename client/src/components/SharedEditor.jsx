@@ -1,4 +1,14 @@
 // client/src/components/SharedEditor.jsx
+// ─────────────────────────────────────────────────────────────────────────────
+// CANDIDATE (peer): Full editor — can type freely. Code syncs to host live.
+//                   Receives hint popups from interviewer.
+//                   Receives pushed solutions from interviewer.
+//
+// INTERVIEWER (host): Read-only mirror of candidate's code.
+//                     Sees every keystroke in real time.
+//                     Cursor shows where candidate is typing.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import { useEffect, useRef, useState, useCallback } from 'react'
 import Editor from '@monaco-editor/react'
 import { socket } from '../socket'
@@ -14,119 +24,125 @@ export default function SharedEditor({ roomId, role, currentUser, onPeerRequest 
   const decorationsRef = useRef([])
   const isRemoteChange = useRef(false)
 
-  const [code, setCode] = useState('// Start coding here...\n')
-  const [peers, setPeers] = useState([])
+  const [code, setCode] = useState('// Candidate will write code here...\n')
   const [language, setLanguage] = useState('javascript')
+  const [peers, setPeers] = useState([])
   const [status, setStatus] = useState('Connecting...')
+
+  // Hint system state
+  const [hints, setHints] = useState([])   // list of active hints shown to candidate
 
   useEffect(() => {
     socket.connect()
 
-    // Join room based on role
+    // Join based on role
     if (role === 'host') {
       socket.emit('join-room-host', { roomId, user: currentUser })
     } else {
       socket.emit('request-join', { roomId, user: currentUser })
     }
 
-    // Successfully joined (both host and accepted peer)
-    socket.on('joined-room', ({ role: confirmedRole }) => {
-      setStatus(`Connected as ${confirmedRole}`)
+    // ── Socket event listeners ────────────────────────────────────────────────
+
+    socket.on('joined-room', ({ role: r }) => {
+      setStatus(r === 'host' ? 'Interviewer connected' : 'Connected — you can start typing')
     })
 
-    // Peer waiting for host approval
-    socket.on('waiting-for-host', ({ msg }) => {
-      setStatus(msg)
-    })
+    socket.on('waiting-for-host', ({ msg }) => setStatus(msg))
+    socket.on('join-error', ({ msg }) => { setStatus('Error: ' + msg); alert(msg) })
+    socket.on('join-rejected', ({ msg }) => { setStatus('Rejected'); alert(msg) })
 
-    // Peer was rejected
-    socket.on('join-rejected', ({ msg }) => {
-      setStatus('Rejected: ' + msg)
-      alert(msg)
-    })
-
-    // Room error
-    socket.on('join-error', ({ msg }) => {
-      setStatus('Error: ' + msg)
-      alert(msg)
-    })
-
-    // Receive code update (from host typing OR from server snapshot)
+    // Code update — from candidate typing or server snapshot
     socket.on('code-update', ({ newCode, senderId }) => {
-      if (senderId === socket.id) return
+      if (senderId === socket.id) return   // ignore own echo
       isRemoteChange.current = true
       setCode(newCode)
     })
 
-    // Host pushed solution to peers
+    // Language changed by host
+    socket.on('language-update', ({ lang }) => setLanguage(lang))
+
+    // Host pushed full solution/starter code
     socket.on('host-push', ({ content }) => {
+      // Only for candidates — replaces their editor content
       isRemoteChange.current = true
       setCode(content)
-      setStatus('Host pushed new code!')
-      setTimeout(() => setStatus('Connected as peer'), 3000)
-    })
-
-    // Cursor update from another user
-    socket.on('cursor-update', ({ userId, userName, position }) => {
-      setPeers(prev => {
-        const exists = prev.find(p => p.id === userId)
-        if (exists) {
-          return prev.map(p => p.id === userId ? { ...p, cursor: position } : p)
-        }
-        return [...prev, { id: userId, name: userName, cursor: position }]
+      // Add a hint notification about the push
+      addHint({
+        hint: 'Interviewer has pushed new code to your editor.',
+        hintType: 'success',
+        from: 'System',
+        timestamp: new Date().toLocaleTimeString(),
       })
     })
 
-    // New user joined
-    socket.on('user-joined', ({ userId, userName, role: joinedRole, socketId }) => {
-      setPeers(prev => {
-        if (prev.find(p => p.id === userId)) return prev
-        return [...prev, { id: userId, name: userName, role: joinedRole, socketId }]
-      })
-      setStatus(`${userName} joined as ${joinedRole}`)
+    // Hint/suggestion received (candidate only sees this)
+    socket.on('hint-received', (hintData) => {
+      addHint(hintData)
+    })
+
+    // Someone joined/left
+    socket.on('user-joined', ({ userId, userName, role: r, socketId }) => {
+      setPeers(prev =>
+        prev.find(p => p.id === userId)
+          ? prev
+          : [...prev, { id: userId, name: userName, role: r, socketId }]
+      )
+      setStatus(`${userName} joined as ${r === 'host' ? 'Interviewer' : 'Candidate'}`)
       setTimeout(() => setStatus('Connected'), 3000)
     })
 
-    // Someone left
-    socket.on('user-left', ({ userId, userName, role: leftRole }) => {
-      setPeers(prev => prev.filter(p => p.id !== userId))
-      setStatus(`${userName} left the room`)
+    socket.on('user-left', ({ userName, role: r }) => {
+      setPeers(prev => prev.filter(p => p.name !== userName))
+      setStatus(`${userName} left`)
       setTimeout(() => setStatus('Connected'), 3000)
     })
 
-    // Host left
     socket.on('host-left', ({ msg }) => {
       setStatus(msg)
       alert(msg)
     })
 
-    // Language changed
-    socket.on('language-change', ({ lang }) => setLanguage(lang))
+    // Cursor updates from others
+    socket.on('cursor-update', ({ userId, userName, position }) => {
+      setPeers(prev => {
+        const exists = prev.find(p => p.id === userId)
+        if (exists) return prev.map(p => p.id === userId ? { ...p, cursor: position } : p)
+        return [...prev, { id: userId, name: userName, cursor: position }]
+      })
+    })
 
-    // Host: peer requesting to join — pass up to EditorPage
+    // Pass peer requests up to EditorPage (host only)
     socket.on('peer-requesting', (data) => {
       if (onPeerRequest) onPeerRequest(data)
     })
 
     return () => {
-      socket.off('joined-room')
-      socket.off('waiting-for-host')
-      socket.off('join-rejected')
-      socket.off('join-error')
-      socket.off('code-update')
-      socket.off('host-push')
-      socket.off('cursor-update')
-      socket.off('user-joined')
-      socket.off('user-left')
-      socket.off('host-left')
-      socket.off('language-change')
-      socket.off('peer-requesting')
+      ;[
+        'joined-room', 'waiting-for-host', 'join-error', 'join-rejected',
+        'code-update', 'language-update', 'host-push', 'hint-received',
+        'user-joined', 'user-left', 'host-left', 'cursor-update', 'peer-requesting',
+      ].forEach(ev => socket.off(ev))
+
       socket.emit('leave-room', { roomId })
       socket.disconnect()
     }
   }, [roomId, role])
 
-  // Render peer cursors as Monaco decorations
+  // ── Add a hint to the list (auto-removes after 12 seconds) ─────────────────
+  const addHint = (hintData) => {
+    const id = Date.now() + Math.random()
+    setHints(prev => [...prev, { ...hintData, id }])
+    setTimeout(() => {
+      setHints(prev => prev.filter(h => h.id !== id))
+    }, 12000)
+  }
+
+  const dismissHint = (id) => {
+    setHints(prev => prev.filter(h => h.id !== id))
+  }
+
+  // ── Render peer cursors as Monaco decorations ───────────────────────────────
   useEffect(() => {
     if (!editorRef.current || !monacoRef.current) return
     const monaco = monacoRef.current
@@ -140,10 +156,8 @@ export default function SharedEditor({ roomId, role, currentUser, onPeerRequest 
         injectCursorStyle(className, color, peer.name)
         return {
           range: new monaco.Range(
-            peer.cursor.lineNumber,
-            peer.cursor.column,
-            peer.cursor.lineNumber,
-            peer.cursor.column
+            peer.cursor.lineNumber, peer.cursor.column,
+            peer.cursor.lineNumber, peer.cursor.column
           ),
           options: {
             className,
@@ -152,12 +166,10 @@ export default function SharedEditor({ roomId, role, currentUser, onPeerRequest 
         }
       })
 
-    decorationsRef.current = editor.deltaDecorations(
-      decorationsRef.current,
-      newDecorations
-    )
+    decorationsRef.current = editor.deltaDecorations(decorationsRef.current, newDecorations)
   }, [peers])
 
+  // ── Handle code changes ─────────────────────────────────────────────────────
   const handleChange = useCallback((value) => {
     if (isRemoteChange.current) {
       isRemoteChange.current = false
@@ -167,6 +179,7 @@ export default function SharedEditor({ roomId, role, currentUser, onPeerRequest 
     socket.emit('code-change', { roomId, newCode: value })
   }, [roomId])
 
+  // ── Broadcast cursor position ───────────────────────────────────────────────
   const handleCursorChange = useCallback((event) => {
     if (!event.position) return
     socket.emit('cursor-move', {
@@ -180,28 +193,40 @@ export default function SharedEditor({ roomId, role, currentUser, onPeerRequest 
     })
   }, [roomId, currentUser])
 
+  // ── Wire up Monaco ──────────────────────────────────────────────────────────
   const handleMount = (editor, monaco) => {
     editorRef.current = editor
     monacoRef.current = monaco
     editor.onDidChangeCursorPosition(handleCursorChange)
 
-    // Peers cannot type in the editor
-    // Only host can type — peers receive pushed code
-    if (role === 'peer') {
+    // HOST: read-only mirror of candidate's work
+    // PEER (candidate): full edit access
+    if (role === 'host') {
       editor.updateOptions({ readOnly: true })
     }
   }
 
+  // ── Hint colour by type ─────────────────────────────────────────────────────
+  const hintColors = {
+    info:    { bg: '#0c1a2e', border: '#1d4ed8', text: '#93c5fd', icon: '💡' },
+    warning: { bg: '#1c1400', border: '#d97706', text: '#fde68a', icon: '⚠️' },
+    success: { bg: '#0a1f12', border: '#16a34a', text: '#86efac', icon: '✅' },
+    error:   { bg: '#1f0a0a', border: '#dc2626', text: '#fca5a5', icon: '❌' },
+  }
+
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
-      {/* Status bar */}
-      <div style={styles.statusBar}>
-        <span style={styles.statusDot(status)} />
-        <span style={styles.statusText}>{status}</span>
+
+      {/* ── Role indicator header ── */}
+      <div style={styles.editorHeader(role)}>
+        {role === 'host'
+          ? '👁 Interviewer View — watching candidate in real time (read only)'
+          : '💻 Your Editor — write your solution here'}
       </div>
 
+      {/* ── Monaco Editor ── */}
       <Editor
-        height="100%"
+        height="calc(100% - 54px)"
         language={language}
         value={code}
         theme="vs-dark"
@@ -215,30 +240,82 @@ export default function SharedEditor({ roomId, role, currentUser, onPeerRequest 
           tabSize: 2,
           wordWrap: 'on',
           cursorBlinking: 'smooth',
-          // Hide the read-only tooltip for peers
           readOnlyMessage: { value: '' },
+          // Show a subtle watermark for host
+          ...(role === 'host' && {
+            renderLineHighlight: 'none',
+          }),
         }}
       />
 
-      {/* Active peers list */}
-      <div style={styles.peerList}>
-        {peers.map((peer, i) => (
-          <span
-            key={peer.id}
-            style={{
-              ...styles.peerBadge,
-              background: CURSOR_COLORS[i % CURSOR_COLORS.length],
-            }}
-          >
-            {peer.name}
-          </span>
-        ))}
+      {/* ── Status bar (bottom) ── */}
+      <div style={styles.statusBar}>
+        <span style={styles.statusDot(status)} />
+        <span style={{ fontSize: 11 }}>{status}</span>
+        {peers.length > 0 && (
+          <div style={styles.peerList}>
+            {peers.map((peer, i) => (
+              <span
+                key={peer.id}
+                style={{
+                  ...styles.peerBadge,
+                  background: CURSOR_COLORS[i % CURSOR_COLORS.length],
+                }}
+              >
+                {peer.name}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
+
+      {/* ── Hint popups (candidate/peer only) ── */}
+      {role === 'peer' && hints.length > 0 && (
+        <div style={styles.hintsContainer}>
+          {hints.map(h => {
+            const c = hintColors[h.hintType] || hintColors.info
+            return (
+              <div key={h.id} style={styles.hintCard(c)}>
+                <div style={styles.hintHeader}>
+                  <span style={styles.hintIcon}>{c.icon}</span>
+                  <span style={{ ...styles.hintFrom, color: c.text }}>
+                    Hint from {h.from}
+                  </span>
+                  <span style={styles.hintTime}>{h.timestamp}</span>
+                  <button
+                    onClick={() => dismissHint(h.id)}
+                    style={styles.hintClose}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div style={{ ...styles.hintText, color: c.text }}>
+                  {h.hint}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
     </div>
   )
 }
 
+// ── Styles ────────────────────────────────────────────────────────────────────
 const styles = {
+  editorHeader: (role) => ({
+    height: 30,
+    background: role === 'host' ? '#0c1a2e' : '#0a1f12',
+    borderBottom: `1px solid ${role === 'host' ? '#1d4ed8' : '#166534'}`,
+    display: 'flex',
+    alignItems: 'center',
+    paddingLeft: 14,
+    fontSize: 11,
+    color: role === 'host' ? '#93c5fd' : '#86efac',
+    fontFamily: 'sans-serif',
+    flexShrink: 0,
+  }),
   statusBar: {
     position: 'absolute',
     bottom: 0,
@@ -253,37 +330,87 @@ const styles = {
     zIndex: 10,
     fontSize: 11,
     color: '#fff',
+    fontFamily: 'sans-serif',
   },
   statusDot: (status) => ({
-    width: 7,
-    height: 7,
-    borderRadius: '50%',
+    width: 7, height: 7, borderRadius: '50%',
     background: status.includes('Error') || status.includes('Rejected')
       ? '#ef4444'
       : status.includes('Waiting') || status.includes('Connecting')
         ? '#f59e0b'
         : '#22c55e',
   }),
-  statusText: { fontSize: 11 },
   peerList: {
-    position: 'absolute',
-    top: 8,
-    right: 12,
+    marginLeft: 'auto',
     display: 'flex',
     gap: 6,
-    zIndex: 10,
-    flexWrap: 'wrap',
-    justifyContent: 'flex-end',
+    paddingRight: 12,
   },
   peerBadge: {
-    padding: '2px 10px',
-    borderRadius: 12,
-    fontSize: 11,
+    padding: '1px 8px',
+    borderRadius: 10,
+    fontSize: 10,
     color: '#fff',
     fontWeight: 500,
   },
+  // Hint popup container — bottom-left of editor
+  hintsContainer: {
+    position: 'absolute',
+    bottom: 36,
+    left: 16,
+    width: 340,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    zIndex: 50,
+    fontFamily: 'sans-serif',
+  },
+  hintCard: (c) => ({
+    background: c.bg,
+    border: `1px solid ${c.border}`,
+    borderLeft: `4px solid ${c.border}`,
+    borderRadius: 10,
+    padding: '10px 12px',
+    boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
+    animation: 'slideIn 0.2s ease',
+  }),
+  hintHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  hintIcon: { fontSize: 14 },
+  hintFrom: { fontWeight: 600, fontSize: 12, flex: 1 },
+  hintTime: { fontSize: 10, color: '#475569' },
+  hintClose: {
+    background: 'transparent',
+    border: 'none',
+    color: '#475569',
+    cursor: 'pointer',
+    fontSize: 12,
+    padding: '0 2px',
+  },
+  hintText: {
+    fontSize: 13,
+    lineHeight: 1.6,
+    whiteSpace: 'pre-wrap',
+  },
 }
 
+// ── CSS animation for hint popups ─────────────────────────────────────────────
+if (typeof document !== 'undefined') {
+  const style = document.createElement('style')
+  style.innerHTML = `
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(-20px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+  `
+  document.head.appendChild(style)
+}
+
+// ── Inject cursor decoration CSS ──────────────────────────────────────────────
 const injectedStyles = new Set()
 function injectCursorStyle(className, color, userName) {
   if (injectedStyles.has(className)) return

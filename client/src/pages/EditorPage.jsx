@@ -15,30 +15,25 @@ export default function EditorPage() {
   const navigate = useNavigate()
 
   const [showVideo, setShowVideo] = useState(false)
-  // List of pending peer requests: [{ peerId, peerName, peerUserId }]
   const [pendingRequests, setPendingRequests] = useState([])
 
   const copyRoomId = () => {
     navigator.clipboard.writeText(roomId)
-      .then(() => alert(`Room code "${roomId}" copied! Share it with peers.`))
+      .then(() => alert(`Room code "${roomId}" copied! Share with candidate.`))
       .catch(() => alert(`Room code: ${roomId}`))
   }
 
   const handleLeaveRoom = () => {
-    const confirmed = window.confirm('Are you sure you want to leave this room?')
-    if (confirmed) {
+    if (window.confirm('Leave this interview session?')) {
       socket.emit('leave-room', { roomId })
       navigate('/lobby')
     }
   }
 
-  // Called by SharedEditor when a peer requests to join
   const handlePeerRequest = useCallback((data) => {
-    setPendingRequests(prev => {
-      // Don't add duplicates
-      if (prev.find(r => r.peerId === data.peerId)) return prev
-      return [...prev, data]
-    })
+    setPendingRequests(prev =>
+      prev.find(r => r.peerId === data.peerId) ? prev : [...prev, data]
+    )
   }, [])
 
   const acceptPeer = (peerId) => {
@@ -58,48 +53,39 @@ export default function EditorPage() {
       <div style={styles.topbar}>
         <span style={styles.logo}>{'</>'}</span>
 
-        <button onClick={copyRoomId} style={styles.roomBadge} title="Click to copy">
-           🔒{roomId}
+        <button onClick={copyRoomId} style={styles.roomBadge} title="Click to copy room code">
+          📋 {roomId}
         </button>
 
         <span style={role === 'host' ? styles.hostBadge : styles.peerBadge}>
-          {role === 'host' ? 'Host' : '👤 Peer'}
+          {role === 'host' ? '👑 Interviewer' : '💻 Candidate'}
         </span>
 
         <span style={styles.userName}>{user?.name}</span>
 
         <div style={styles.topRight}>
-          <button
-            onClick={() => setShowVideo(v => !v)}
-            style={styles.vidBtn}
-          >
-            {showVideo ? 'Hide Video' : '📹 Video Call'}
+          <button onClick={() => setShowVideo(v => !v)} style={styles.vidBtn}>
+            {showVideo ? '📵 Hide Video' : '📹 Video Call'}
           </button>
           <button onClick={handleLeaveRoom} style={styles.leaveBtn}>
-            Leave Room
+            Leave
           </button>
         </div>
       </div>
 
-      {/* ── Pending peer requests (host only) ── */}
+      {/* ── Candidate admission requests (interviewer only) ── */}
       {role === 'host' && pendingRequests.length > 0 && (
-        <div style={styles.requestsBanner}>
-          <span style={styles.requestsTitle}>
-            Waiting to join ({pendingRequests.length}):
+        <div style={styles.admitBanner}>
+          <span style={styles.admitTitle}>
+            🔔 Candidates waiting to join ({pendingRequests.length}):
           </span>
           {pendingRequests.map(req => (
-            <div key={req.peerId} style={styles.requestCard}>
-              <span style={styles.requestName}>👤 {req.peerName}</span>
-              <button
-                onClick={() => acceptPeer(req.peerId)}
-                style={styles.acceptBtn}
-              >
-                Accept
+            <div key={req.peerId} style={styles.admitCard}>
+              <span style={styles.admitName}>💻 {req.peerName}</span>
+              <button onClick={() => acceptPeer(req.peerId)} style={styles.admitBtn}>
+                Admit
               </button>
-              <button
-                onClick={() => rejectPeer(req.peerId)}
-                style={styles.rejectBtn}
-              >
+              <button onClick={() => rejectPeer(req.peerId)} style={styles.rejectBtn}>
                 Reject
               </button>
             </div>
@@ -107,7 +93,7 @@ export default function EditorPage() {
         </div>
       )}
 
-      {/* ── Main content area ── */}
+      {/* ── Main layout ── */}
       <div style={styles.main}>
         <div style={styles.editorWrap}>
           <SharedEditor
@@ -123,13 +109,9 @@ export default function EditorPage() {
         )}
       </div>
 
-      {/* ── Video panel (floating) ── */}
+      {/* ── Floating video panel ── */}
       {showVideo && (
-        <VideoPanel
-          roomId={roomId}
-          userId={user?.id}
-          role={role}
-        />
+        <VideoPanel roomId={roomId} userId={user?.id} role={role} />
       )}
     </div>
   )
@@ -155,12 +137,7 @@ const styles = {
     height: 48,
     flexShrink: 0,
   },
-  logo: {
-    color: '#6366F1',
-    fontWeight: 700,
-    fontSize: 16,
-    marginRight: 4,
-  },
+  logo: { color: '#6366F1', fontWeight: 700, fontSize: 16 },
   roomBadge: {
     background: '#2a2a3a',
     border: '1px solid #3f3f5a',
@@ -170,7 +147,6 @@ const styles = {
     color: '#94a3b8',
     cursor: 'pointer',
     fontFamily: 'monospace',
-    letterSpacing: '0.05em',
   },
   hostBadge: {
     background: '#312e81',
@@ -188,15 +164,11 @@ const styles = {
     color: '#6ee7b7',
     fontWeight: 500,
   },
-  userName: {
-    color: '#64748b',
-    fontSize: 13,
-  },
+  userName: { color: '#64748b', fontSize: 13 },
   topRight: {
     marginLeft: 'auto',
     display: 'flex',
     gap: 8,
-    alignItems: 'center',
   },
   vidBtn: {
     padding: '6px 14px',
@@ -216,8 +188,7 @@ const styles = {
     cursor: 'pointer',
     fontSize: 13,
   },
-  // Pending requests banner
-  requestsBanner: {
+  admitBanner: {
     background: '#1c1400',
     borderBottom: '1px solid #854d0e',
     padding: '10px 16px',
@@ -227,12 +198,8 @@ const styles = {
     flexWrap: 'wrap',
     flexShrink: 0,
   },
-  requestsTitle: {
-    color: '#fbbf24',
-    fontSize: 13,
-    fontWeight: 600,
-  },
-  requestCard: {
+  admitTitle: { color: '#fbbf24', fontSize: 13, fontWeight: 600 },
+  admitCard: {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
@@ -241,11 +208,8 @@ const styles = {
     borderRadius: 8,
     padding: '6px 10px',
   },
-  requestName: {
-    color: '#fde68a',
-    fontSize: 13,
-  },
-  acceptBtn: {
+  admitName: { color: '#fde68a', fontSize: 13 },
+  admitBtn: {
     padding: '4px 12px',
     background: '#14532d',
     border: '1px solid #166534',
